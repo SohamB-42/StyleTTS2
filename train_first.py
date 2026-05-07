@@ -46,13 +46,22 @@ logger = get_logger(__name__, log_level="DEBUG")
 @click.command()
 @click.option('-p', '--config_path', default='Configs/config.yml', type=str)
 def main(config_path):
+    torch.backends.cudnn.benchmark = True
+    torch.manual_seed(1337)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(1337)
+        
     config = yaml.safe_load(open(config_path))
 
     log_dir = config['log_dir']
     if not osp.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
     shutil.copy(config_path, osp.join(log_dir, osp.basename(config_path)))
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(project_dir=log_dir, split_batches=True, kwargs_handlers=[ddp_kwargs])    
+    # BF16 mixed precision: RTX 4000 Ada supports BF16 natively (~2x speedup vs FP32).
+    # If you get NaN losses, change 'bf16' to 'fp16' or remove mixed_precision entirely.
+    accelerator = Accelerator(project_dir=log_dir, split_batches=True,
+                              mixed_precision='bf16',
+                              kwargs_handlers=[ddp_kwargs])    
     if accelerator.is_main_process:
         writer = SummaryWriter(log_dir + "/tensorboard")
 
@@ -88,7 +97,7 @@ def main(config_path):
                                         OOD_data=OOD_data,
                                         min_length=min_length,
                                         batch_size=batch_size,
-                                        num_workers=2,
+                                        num_workers=4,  # increased from 2; tune down if RAM is tight
                                         dataset_config={},
                                         device=device)
 
